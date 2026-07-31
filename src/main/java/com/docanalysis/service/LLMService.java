@@ -17,7 +17,7 @@ import reactor.core.publisher.Flux;
 import java.util.*;
 
 /**
- * LLM Service using Ollama Mistral for answer generation.
+ * LLM Service using Ollama Qwen2.5:0.5B for answer generation.
  * Provides streaming completion for RAG queries with strict grounding prompts.
  */
 @Service
@@ -34,21 +34,20 @@ public class LLMService {
     @Value("${app.ollama.base-url:http://ollama:11434}")
     private String ollamaBaseUrl;
 
-    @Value("${app.ollama.model:mistral}")
+    @Value("${app.ollama.model:qwen2.5:0.5b}")
     private String modelName;
 
-    @Value("${app.llm.temperature:0.7}")
+    @Value("${app.llm.temperature:0.3}")
     private double temperature;
 
-    private volatile String resolvedModelName;
-
     /**
-     * Generate streaming completion from Ollama Mistral with grounding prompt.
+     * Generate streaming completion from Ollama Qwen2.5:0.5B with grounding prompt.
+     * Optimized for fast inference with low temperature for deterministic output.
      * @param prompt The augmented prompt with context and question
      * @return Flux of response chunks for streaming to client
      */
     public Flux<String> streamCompletion(String prompt) {
-        log.debug("Generating streaming completion with Ollama Mistral model: {}", modelName);
+        log.debug("Generating streaming completion with Ollama Qwen2.5:0.5B model");
 
         try {
             return generateOllamaStreamingResponse(prompt);
@@ -61,17 +60,8 @@ public class LLMService {
     private Flux<String> generateOllamaStreamingResponse(String prompt) {
         try {
             log.info("Calling Ollama at: {}", ollamaBaseUrl);
-            String modelToUse = resolveModelForUse();
-            return callOllamaGenerateStream(prompt, modelToUse)
-                    .onErrorResume(WebClientResponseException.NotFound.class, notFound -> {
-                        if (isModelNotFound(notFound.getResponseBodyAsString())) {
-                            log.warn("Configured or cached Ollama model '{}' not found. Re-resolving model.", modelToUse);
-                            resolvedModelName = null;
-                            String fallbackModel = resolveModelForUse();
-                            return callOllamaGenerateStream(prompt, fallbackModel);
-                        }
-                        return Flux.error(notFound);
-                    })
+            String model = "qwen2.5:0.5b";
+            return callOllamaGenerateStream(prompt, model)
                     .filter(response -> response.getResponse() != null && !response.getResponse().isBlank())
                     .map(OllamaStreamResponse::getResponse)
                     .switchIfEmpty(Flux.error(new RuntimeException("Ollama returned empty response")))
@@ -102,70 +92,6 @@ public class LLMService {
                 .bodyToFlux(OllamaStreamResponse.class);
     }
 
-    private boolean isModelNotFound(String responseBody) {
-        return responseBody != null
-                && responseBody.contains("model")
-                && responseBody.contains("not found");
-    }
-
-    private OllamaResponse callOllamaGenerate(String prompt, String model) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
-
-        Map<String, Object> request = new LinkedHashMap<>();
-        request.put("model", model);
-        request.put("prompt", prompt);
-        request.put("temperature", temperature);
-        request.put("stream", false);
-
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
-        String ollamaUrl = ollamaBaseUrl.endsWith("/") ? ollamaBaseUrl : ollamaBaseUrl + "/";
-
-        log.debug("Using Ollama model: {}", model);
-        return restTemplate.postForObject(ollamaUrl + "api/generate", entity, OllamaResponse.class);
-    }
-
-    private String resolveModelForUse() {
-        if (resolvedModelName != null && !resolvedModelName.isBlank()) {
-            return resolvedModelName;
-        }
-
-        String ollamaUrl = ollamaBaseUrl.endsWith("/") ? ollamaBaseUrl : ollamaBaseUrl + "/";
-        OllamaTagsResponse tagsResponse = restTemplate.getForObject(ollamaUrl + "api/tags", OllamaTagsResponse.class);
-
-        if (tagsResponse == null || tagsResponse.getModels() == null || tagsResponse.getModels().isEmpty()) {
-            throw new IllegalStateException("No Ollama models are available. Pull a model first (e.g. ollama pull " + modelName + ").");
-        }
-
-        List<String> availableModels = new ArrayList<>();
-        for (OllamaModelInfo model : tagsResponse.getModels()) {
-            if (model.getName() != null && !model.getName().isBlank()) {
-                availableModels.add(model.getName());
-            }
-        }
-
-        String configuredModel = modelName;
-        if (availableModels.contains(configuredModel)) {
-            resolvedModelName = configuredModel;
-            return resolvedModelName;
-        }
-
-        String configuredWithLatest = configuredModel + ":latest";
-        if (availableModels.contains(configuredWithLatest)) {
-            resolvedModelName = configuredWithLatest;
-            return resolvedModelName;
-        }
-
-        String fallback = availableModels.get(0);
-        log.warn("Configured Ollama model '{}' not found. Falling back to installed model '{}'.", configuredModel, fallback);
-        resolvedModelName = fallback;
-        return resolvedModelName;
-    }
-
-    /**
-     * Ollama API response model.
-     */
     static class OllamaResponse {
         private String response;
         private String error;
@@ -214,30 +140,6 @@ public class LLMService {
 
         public void setError(String error) {
             this.error = error;
-        }
-    }
-
-    static class OllamaTagsResponse {
-        private List<OllamaModelInfo> models;
-
-        public List<OllamaModelInfo> getModels() {
-            return models;
-        }
-
-        public void setModels(List<OllamaModelInfo> models) {
-            this.models = models;
-        }
-    }
-
-    static class OllamaModelInfo {
-        private String name;
-
-        public String getName() {
-            return name;
-        }
-
-        public void setName(String name) {
-            this.name = name;
         }
     }
 }

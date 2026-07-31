@@ -28,12 +28,12 @@ class RagIntegrationServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void llmServiceUsesOllamaForGeneration() {
+    void llmServiceUsesOllamaQwenForGeneration() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         ExchangeFunction exchangeFunction = request -> Mono.just(
             ClientResponse.create(HttpStatus.OK)
                 .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_NDJSON_VALUE)
-                .body("{\"response\":\"This is an answer from Mistral about the document context.\",\"done\":false}\n"
+                .body("{\"response\":\"This is an answer from Qwen about the document context.\",\"done\":false}\n"
                     + "{\"done\":true}\n")
                 .build()
         );
@@ -42,36 +42,26 @@ class RagIntegrationServiceTest {
             .build();
         LLMService llmService = new LLMService(restTemplate, webClient);
         ReflectionTestUtils.setField(llmService, "ollamaBaseUrl", "http://ollama:11434");
-        ReflectionTestUtils.setField(llmService, "modelName", "mistral");
-        ReflectionTestUtils.setField(llmService, "temperature", 0.7);
-
-        var tagsResponse = new LLMService.OllamaTagsResponse();
-        var modelInfo = new LLMService.OllamaModelInfo();
-        modelInfo.setName("mistral");
-        tagsResponse.setModels(List.of(modelInfo));
-        when(restTemplate.getForObject(anyString(), any(Class.class))).thenReturn(tagsResponse);
+        ReflectionTestUtils.setField(llmService, "temperature", 0.3);
 
         Flux<String> result = llmService.streamCompletion("What does the document say?");
         String combined = result.collectList().block().stream().reduce(String::concat).orElse("");
 
         assertThat(combined).contains("answer");
-        assertThat(combined).contains("Mistral");
+        assertThat(combined).contains("Qwen");
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void embeddingServiceUsesVoyageApiWhenConfigured() {
+    void embeddingServiceUsesOllamaLocal() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         ChromaDbService chromaDbService = mock(ChromaDbService.class);
         VectorEmbeddingService service = new VectorEmbeddingService(chromaDbService, restTemplate);
-        ReflectionTestUtils.setField(service, "voyageApiKey", "test-key");
-        ReflectionTestUtils.setField(service, "voyageBaseUrl", "https://example.test/v1/embeddings");
-        ReflectionTestUtils.setField(service, "voyageModel", "voyage-3");
+        ReflectionTestUtils.setField(service, "ollamaBaseUrl", "http://ollama:11434");
+        ReflectionTestUtils.setField(service, "embeddingModel", "nomic-embed-text");
 
-        var response = new VectorEmbeddingService.VoyageEmbeddingResponse();
-        var entry = new VectorEmbeddingService.VoyageEmbeddingEntry();
-        entry.setEmbedding(List.of(0.1, 0.2, 0.3));
-        response.setData(List.of(entry));
+        var response = new VectorEmbeddingService.OllamaEmbeddingResponse();
+        response.setEmbedding(List.of(0.1, 0.2, 0.3));
         when(restTemplate.postForObject(anyString(), any(), any(Class.class))).thenReturn(response);
 
         float[] embedding = service.getEmbeddingVector("hello world");
@@ -80,15 +70,15 @@ class RagIntegrationServiceTest {
     }
 
     @Test
-    void embeddingServiceFallsBackToMockWhenNoApiKey() {
+    void embeddingServiceFallsBackToMockWhenOllamaUnavailable() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         ChromaDbService chromaDbService = mock(ChromaDbService.class);
         VectorEmbeddingService service = new VectorEmbeddingService(chromaDbService, restTemplate);
-        ReflectionTestUtils.setField(service, "voyageApiKey", "");
+        ReflectionTestUtils.setField(service, "ollamaBaseUrl", "http://localhost:99999");
 
         float[] embedding = service.getEmbeddingVector("hello world");
 
         assertThat(embedding).isNotEmpty();
-        assertThat(embedding.length).isGreaterThan(0);
+        assertThat(embedding.length).isEqualTo(384);
     }
 }

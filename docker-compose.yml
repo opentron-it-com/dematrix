@@ -85,11 +85,11 @@ services:
       ollama:
         condition: service_started
     environment:
-      OLLAMA_HOST: ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-mistral}
+      OLLAMA_HOST: http://ollama:11434
     networks:
       - docnet
-    entrypoint: ["/bin/sh", "-c", "echo Pulling Ollama model: $${OLLAMA_MODEL}; ollama pull $${OLLAMA_MODEL}"]
+    entrypoint: /bin/sh
+    command: -c "ollama pull qwen2.5:0.5b; ollama pull nomic-embed-text; echo 'Models loaded'"
     restart: "no"
 
   frontend:

@@ -14,7 +14,8 @@ import org.springframework.web.client.RestTemplate;
 import java.util.*;
 
 /**
- * Generates embeddings using Voyage AI and stores them in ChromaDB.
+ * Generates embeddings using local Ollama embeddings (free, no API calls).
+ * Previously used Voyage AI API but switched to local for cost-efficiency.
  * Embeddings are stored ONLY in ChromaDB to avoid synchronization issues.
  */
 @Service
@@ -25,17 +26,15 @@ public class VectorEmbeddingService {
     private final ChromaDbService chromaDbService;
     private final RestTemplate restTemplate;
 
-    @Value("${app.voyage.api-key:}")
-    private String voyageApiKey;
+    @Value("${app.ollama.base-url:http://ollama:11434}")
+    private String ollamaBaseUrl;
 
-    @Value("${app.voyage.base-url:https://api.voyageai.com/v1/embeddings}")
-    private String voyageBaseUrl;
-
-    @Value("${app.voyage.model:voyage-3}")
-    private String voyageModel;
+    @Value("${app.embedding.model:nomic-embed-text}")
+    private String embeddingModel;
 
     /**
-     * Generate Voyage embedding and store in ChromaDB only.
+     * Generate embedding and store in ChromaDB only.
+     * Uses local Ollama embeddings for zero-cost inference.
      * @param chunk The document chunk to embed
      */
     public void generateAndStoreEmbedding(DocumentChunk chunk) {
@@ -68,7 +67,7 @@ public class VectorEmbeddingService {
     }
 
     /**
-     * Generate embedding vector for text using Voyage AI.
+     * Generate embedding vector for text using local Ollama.
      * @param text The text to embed
      * @return float array representing the embedding
      */
@@ -77,46 +76,58 @@ public class VectorEmbeddingService {
             if (text == null || text.isBlank()) {
                 return new float[0];
             }
-            if (voyageApiKey != null && !voyageApiKey.isBlank()) {
-                return callVoyageApi(text);
-            }
-            log.warn("Voyage API key is not configured; falling back to deterministic embedding");
-            return generateMockEmbedding(text);
+            return callOllamaEmbedding(text);
         } catch (Exception e) {
-            log.error("Error generating embedding", e);
-            throw new DocumentProcessingException("Embedding generation failed: " + e.getMessage(), e);
+            log.error("Error generating embedding with Ollama, using fallback", e);
+            return generateMockEmbedding(text);
         }
     }
 
-    private float[] callVoyageApi(String text) {
+    /**
+     * Call local Ollama embeddings endpoint.
+     * Model: nomic-embed-text (384 dimensions, fast, free).
+     */
+    private float[] callOllamaEmbedding(String text) {
+        String ollamaUrl = ollamaBaseUrl.endsWith("/") ? ollamaBaseUrl : ollamaBaseUrl + "/";
+
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(voyageApiKey);
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
 
         Map<String, Object> request = new HashMap<>();
-        request.put("input", List.of(text));
-        request.put("model", voyageModel);
+        request.put("model", embeddingModel);
+        request.put("prompt", text);
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
-        VoyageEmbeddingResponse response = restTemplate.postForObject(voyageBaseUrl, entity, VoyageEmbeddingResponse.class);
+        
+        try {
+            OllamaEmbeddingResponse response = restTemplate.postForObject(
+                    ollamaUrl + "api/embeddings",
+                    entity,
+                    OllamaEmbeddingResponse.class
+            );
 
-        if (response == null || response.getData() == null || response.getData().isEmpty()) {
-            throw new DocumentProcessingException("Voyage API returned an empty embedding response");
-        }
+            if (response == null || response.getEmbedding() == null || response.getEmbedding().isEmpty()) {
+                log.warn("Ollama returned empty embedding, using fallback");
+                return generateMockEmbedding(text);
+            }
 
-        List<Double> embeddingValues = response.getData().get(0).getEmbedding();
-        if (embeddingValues == null || embeddingValues.isEmpty()) {
-            throw new DocumentProcessingException("Voyage API returned no embedding values");
+            List<Double> embeddingValues = response.getEmbedding();
+            float[] result = new float[embeddingValues.size()];
+            for (int i = 0; i < embeddingValues.size(); i++) {
+                result[i] = embeddingValues.get(i).floatValue();
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("Ollama embedding failed ({}), ensure model '{}' is pulled. Using fallback", 
+                    e.getMessage(), embeddingModel);
+            return generateMockEmbedding(text);
         }
-
-        float[] result = new float[embeddingValues.size()];
-        for (int i = 0; i < embeddingValues.size(); i++) {
-            result[i] = embeddingValues.get(i).floatValue();
-        }
-        return result;
     }
 
+    /**
+     * Fallback: deterministic mock embedding (384 dims).
+     * Used when Ollama is unavailable. Quality is lower but allows graceful degradation.
+     */
     private float[] generateMockEmbedding(String text) {
         int dimension = 384;
         float[] vector = new float[dimension];
@@ -151,19 +162,7 @@ public class VectorEmbeddingService {
         return getEmbeddingVector(query);
     }
 
-    static class VoyageEmbeddingResponse {
-        private List<VoyageEmbeddingEntry> data;
-
-        public List<VoyageEmbeddingEntry> getData() {
-            return data;
-        }
-
-        public void setData(List<VoyageEmbeddingEntry> data) {
-            this.data = data;
-        }
-    }
-
-    static class VoyageEmbeddingEntry {
+    static class OllamaEmbeddingResponse {
         private List<Double> embedding;
 
         public List<Double> getEmbedding() {

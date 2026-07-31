@@ -16,13 +16,13 @@ import java.util.stream.Collectors;
 /**
  * RAG Generation Service - Orchestrates the retrieval-augmented generation pipeline.
  * 
+ * Optimized for fast inference with Qwen2.5:0.5B.
  * Flow:
  * 1. Embed user query
- * 2. Retrieve top-5 chunks from ChromaDB
- * 3. Expand with neighbor chunks for context continuity
- * 4. Build grounded prompt from PLAN specification
- * 5. Stream response from Mistral LLM
- * 6. Attach citations to response
+ * 2. Retrieve top-3 chunks from ChromaDB (reduced for speed)
+ * 3. Build compact prompt for fast inference
+ * 4. Stream response from Qwen2.5:0.5B LLM
+ * 5. Attach citations to response
  */
 @Service
 @RequiredArgsConstructor
@@ -33,7 +33,7 @@ public class RAGGenerationService {
     private final VectorEmbeddingService vectorEmbeddingService;
     private final LLMService llmService;
     
-    @Value("${app.search.top-k:5}")
+    @Value("${app.search.top-k:3}")
     private int contextLimit;
     
     /**
@@ -50,7 +50,7 @@ public class RAGGenerationService {
             float[] queryVector = vectorEmbeddingService.embedQuery(userQuery);
             log.debug("Query vector generated: {} dimensions", queryVector.length);
             
-            // Step 2: Retrieve relevant contexts from Chroma (top-5)
+            // Step 2: Retrieve relevant contexts from Chroma (top-3 for speed)
             List<DocumentChunk> contextChunks = vectorRepositoryService.searchRelevantContexts(queryVector);
             log.debug("Retrieved {} context chunks", contextChunks.size());
             
@@ -65,7 +65,7 @@ public class RAGGenerationService {
                         .build());
             }
             
-            // Step 3: Build augmented prompt with context (PLAN specification)
+            // Step 3: Build compact augmented prompt for fast inference
             String augmentedPrompt = buildAugmentedPrompt(userQuery, contextChunks);
             log.debug("Augmented prompt length: {} characters", augmentedPrompt.length());
             
@@ -88,42 +88,36 @@ public class RAGGenerationService {
     }
     
     /**
-     * Build augmented prompt following PLAN specification with strict grounding.
+     * Build compact augmented prompt optimized for fast inference.
+     * Uses minimal tokens for Qwen2.5:0.5B speed.
      * @param userQuery The user's question
      * @param contextChunks Retrieved document chunks
      * @return Formatted prompt for LLM
      */
     private String buildAugmentedPrompt(String userQuery, List<DocumentChunk> contextChunks) {
-        StringBuilder promptBuilder = new StringBuilder();
+        StringBuilder promptBuilder = new StringBuilder(512);
         
-        // PLAN grounding prompt
-        promptBuilder.append("You are an Enterprise Document Assistant.\n");
-        promptBuilder.append("Answer only from the provided context.\n");
-        promptBuilder.append("If the answer is not contained in the context, say:\n");
-        promptBuilder.append("\"I could not find that information in the uploaded documents.\"\n");
-        promptBuilder.append("Provide citations for every answer.\n\n");
+        // Shorter system prompt for faster inference
+        promptBuilder.append("Answer from the context only.\n");
+        promptBuilder.append("If not found, say: \"Not in documents.\"\n\n");
         
-        // Add context sections
+        // Add context sections - compact format
         promptBuilder.append("CONTEXT:\n");
-        promptBuilder.append("---\n");
         
         for (int i = 0; i < contextChunks.size(); i++) {
             DocumentChunk chunk = contextChunks.get(i);
-            
-            promptBuilder.append(String.format("[Source %d]\n", i + 1));
-            promptBuilder.append("Document: ").append(chunk.getDocument().getFileName()).append("\n");
+            promptBuilder.append("[").append(i + 1).append("] ");
+            promptBuilder.append(chunk.getDocument().getFileName());
             if (chunk.getPageNumber() != null) {
-                promptBuilder.append("Page: ").append(chunk.getPageNumber()).append("\n");
+                promptBuilder.append(" p.").append(chunk.getPageNumber());
             }
-            promptBuilder.append("---\n");
-            promptBuilder.append(chunk.getChunkText()).append("\n");
-            promptBuilder.append("---\n\n");
+            promptBuilder.append(":\n");
+            promptBuilder.append(chunk.getChunkText()).append("\n\n");
         }
         
         // Add question
-        promptBuilder.append("QUESTION:\n");
-        promptBuilder.append(userQuery).append("\n\n");
-        promptBuilder.append("RESPONSE:\n");
+        promptBuilder.append("Q: ").append(userQuery).append("\n");
+        promptBuilder.append("A:");
         
         return promptBuilder.toString();
     }
