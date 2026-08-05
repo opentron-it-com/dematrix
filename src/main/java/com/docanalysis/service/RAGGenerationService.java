@@ -1,7 +1,10 @@
 package com.docanalysis.service;
 
+import com.docanalysis.domain.Document;
 import com.docanalysis.domain.DocumentChunk;
 import com.docanalysis.dto.ChatStreamResponse;
+import com.docanalysis.repository.DocumentChunkRepository;
+import com.docanalysis.repository.DocumentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,9 +21,9 @@ import java.util.stream.Collectors;
  * 
  * Optimized for fast inference with Qwen2.5:0.5B.
  * Flow:
- * 1. Embed user query
- * 2. Retrieve top-3 chunks from ChromaDB (reduced for speed)
- * 3. Build compact prompt for fast inference
+ * 1. For comprehensive analysis: fetch ALL chunks from selected documents
+ * 2. For regular queries: Embed user query, retrieve top-K chunks from ChromaDB
+ * 3. Build augmented prompt for fast inference
  * 4. Stream response from Qwen2.5:0.5B LLM
  * 5. Attach citations to response
  */
@@ -32,32 +35,47 @@ public class RAGGenerationService {
     private final VectorRepositoryService vectorRepositoryService;
     private final VectorEmbeddingService vectorEmbeddingService;
     private final LLMService llmService;
+    private final DocumentChunkRepository documentChunkRepository;
+    private final DocumentRepository documentRepository;
     
     @Value("${app.search.top-k:3}")
     private int contextLimit;
     
     /**
-     * Generate streaming RAG response for user query.
+     * Generate streaming RAG response for user query, filtered by selected documents.
      * @param userQuery The natural language question
      * @param conversationId Conversation ID for tracking
+     * @param documentIds Optional list of document IDs to filter by
+     * @param comprehensiveAnalysis If true, fetch ALL chunks instead of vector search
      * @return Flux of streaming response chunks
      */
-    public Flux<ChatStreamResponse> generateStreamingResponse(String userQuery, String conversationId) {
-        log.info("Starting RAG generation for query: {}", userQuery);
+    public Flux<ChatStreamResponse> generateStreamingResponse(String userQuery, String conversationId, 
+                                                             List<String> documentIds, Boolean comprehensiveAnalysis) {
+        log.info("Starting RAG generation for query: {} with {} documents (comprehensive: {})", userQuery, 
+                documentIds != null ? documentIds.size() : "all", comprehensiveAnalysis);
         
         try {
-            // Step 1: Embed the user query using Voyage
-            float[] queryVector = vectorEmbeddingService.embedQuery(userQuery);
-            log.debug("Query vector generated: {} dimensions", queryVector.length);
+            List<DocumentChunk> contextChunks;
             
-            // Step 2: Retrieve relevant contexts from Chroma (top-3 for speed)
-            List<DocumentChunk> contextChunks = vectorRepositoryService.searchRelevantContexts(queryVector);
-            log.debug("Retrieved {} context chunks", contextChunks.size());
+            if (Boolean.TRUE.equals(comprehensiveAnalysis) && documentIds != null && !documentIds.isEmpty()) {
+                // Fetch ALL chunks from selected documents
+                log.info("Comprehensive analysis mode: fetching all chunks from {} documents", documentIds.size());
+                contextChunks = documentIds.stream()
+                        .flatMap(docId -> documentChunkRepository.findByDocumentId(docId).stream())
+                        .collect(Collectors.toList());
+                log.info("Retrieved {} chunks in comprehensive mode", contextChunks.size());
+            } else {
+                // Standard vector search mode
+                float[] queryVector = vectorEmbeddingService.embedQuery(userQuery);
+                log.debug("Query vector generated: {} dimensions", queryVector.length);
+                contextChunks = vectorRepositoryService.searchRelevantContexts(queryVector, documentIds);
+                log.debug("Retrieved {} context chunks via vector search", contextChunks.size());
+            }
             
             if (contextChunks.isEmpty()) {
                 log.warn("No relevant chunks found for query - proceeding with generic response");
                 return Flux.just(ChatStreamResponse.builder()
-                        .chunk("No documents have been uploaded yet or no relevant information was found. Please upload documents to enable document analysis.")
+                        .chunk("No documents have been uploaded yet or no relevant information was found in the selected documents. Please upload documents or select different documents to enable document analysis.")
                         .status("completed")
                         .conversationId(conversationId)
                         .timestamp(LocalDateTime.now())
@@ -65,11 +83,11 @@ public class RAGGenerationService {
                         .build());
             }
             
-            // Step 3: Build compact augmented prompt for fast inference
+            // Build augmented prompt for fast inference
             String augmentedPrompt = buildAugmentedPrompt(userQuery, contextChunks);
             log.debug("Augmented prompt length: {} characters", augmentedPrompt.length());
             
-            // Step 4: Stream response from LLM
+            // Stream response from LLM
             return llmService.streamCompletion(augmentedPrompt)
                     .map(chunk -> buildStreamingResponse(chunk, contextChunks, conversationId, false))
                     .concatWith(Mono.fromCallable(() -> 
@@ -86,38 +104,58 @@ public class RAGGenerationService {
                     .build());
         }
     }
+
+    /**
+     * Overload for backward compatibility
+     */
+    public Flux<ChatStreamResponse> generateStreamingResponse(String userQuery, String conversationId, List<String> documentIds) {
+        return generateStreamingResponse(userQuery, conversationId, documentIds, false);
+    }
     
     /**
-     * Build compact augmented prompt optimized for fast inference.
+     * Build augmented prompt optimized for fast inference.
      * Uses minimal tokens for Qwen2.5:0.5B speed.
      * @param userQuery The user's question
      * @param contextChunks Retrieved document chunks
      * @return Formatted prompt for LLM
      */
     private String buildAugmentedPrompt(String userQuery, List<DocumentChunk> contextChunks) {
-        StringBuilder promptBuilder = new StringBuilder(512);
+        StringBuilder promptBuilder = new StringBuilder(2048);
         
-        // Shorter system prompt for faster inference
-        promptBuilder.append("Answer from the context only.\n");
-        promptBuilder.append("If not found, say: \"Not in documents.\"\n\n");
+        // Check if this is a requirements/analysis query
+        boolean isAnalysisQuery = userQuery.toLowerCase().contains("analyze") || 
+                                 userQuery.toLowerCase().contains("technolog") ||
+                                 userQuery.toLowerCase().contains("experience") ||
+                                 userQuery.toLowerCase().contains("requirement") ||
+                                 userQuery.toLowerCase().contains("responsibility") ||
+                                 userQuery.toLowerCase().contains("salary") ||
+                                 userQuery.length() > 100;
         
-        // Add context sections - compact format
-        promptBuilder.append("CONTEXT:\n");
+        if (isAnalysisQuery) {
+            promptBuilder.append("You are a job requirements analyzer. Extract and summarize ALL information from the documents.\n");
+            promptBuilder.append("Include: job title, technologies, skills, experience level, responsibilities, salary/compensation, location, benefits, qualifications, and any other requirements.\n");
+            promptBuilder.append("Format clearly with headers for each section.\n\n");
+        } else {
+            promptBuilder.append("Answer from the context only.\n");
+            promptBuilder.append("If not found, say: \"Not available in the documents.\"\n\n");
+        }
+        
+        // Add ALL context sections
+        promptBuilder.append("DOCUMENTS:\n");
         
         for (int i = 0; i < contextChunks.size(); i++) {
             DocumentChunk chunk = contextChunks.get(i);
-            promptBuilder.append("[").append(i + 1).append("] ");
-            promptBuilder.append(chunk.getDocument().getFileName());
+            promptBuilder.append("\n--- Document ").append(i + 1).append(" ---\n");
+            promptBuilder.append("File: ").append(chunk.getDocument().getFileName()).append("\n");
             if (chunk.getPageNumber() != null) {
-                promptBuilder.append(" p.").append(chunk.getPageNumber());
+                promptBuilder.append("Page: ").append(chunk.getPageNumber()).append("\n");
             }
-            promptBuilder.append(":\n");
-            promptBuilder.append(chunk.getChunkText()).append("\n\n");
+            promptBuilder.append(chunk.getChunkText()).append("\n");
         }
         
         // Add question
-        promptBuilder.append("Q: ").append(userQuery).append("\n");
-        promptBuilder.append("A:");
+        promptBuilder.append("\nQuestion: ").append(userQuery).append("\n");
+        promptBuilder.append("Answer:");
         
         return promptBuilder.toString();
     }

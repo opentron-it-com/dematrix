@@ -13,6 +13,10 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/docdb
       SPRING_DATASOURCE_USERNAME: docuser
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-docpass123}
+      APP_EMBEDDING_MODEL: mxbai-embed-large
+      APP_CHUNKING_CHUNK_SIZE: 1024
+      APP_CHUNKING_OVERLAP: 100
+      APP_CHUNKING_MIN_CHUNK_SIZE: 256
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,7 +93,7 @@ services:
     networks:
       - docnet
     entrypoint: /bin/sh
-    command: -c "ollama pull qwen2.5:0.5b; ollama pull nomic-embed-text; echo 'Models loaded'"
+    command: -c "ollama pull qwen2.5:0.5b; ollama pull mxbai-embed-large; echo 'Models loaded'"
     restart: "no"
 
   frontend:
@@ -103,6 +107,10 @@ services:
     environment:
       REACT_APP_API_URL: http://localhost:8080/api
       NODE_ENV: development
+      WATCHPACK_POLLING: 100
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
     networks:
       - docnet
     stdin_open: true

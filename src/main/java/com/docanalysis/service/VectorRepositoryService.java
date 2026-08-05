@@ -12,6 +12,7 @@ import java.util.*;
 /**
  * Retrieves relevant document chunks using Chroma vector search.
  * Implements neighbor chunk expansion for improved context continuity.
+ * Supports filtering by document IDs for multi-document RAG.
  */
 @Service
 @RequiredArgsConstructor
@@ -29,13 +30,16 @@ public class VectorRepositoryService {
     
     /**
      * Search for relevant chunks and expand with neighbors for context continuity.
+     * Filters results to only include chunks from specified documents.
      * @param queryVector The embedding vector to search for
+     * @param documentIds Optional list of document IDs to filter by. If null, searches all documents.
      * @return List of document chunks with neighbor expansion
      */
-    public List<DocumentChunk> searchRelevantContexts(float[] queryVector) {
-        log.debug("Searching for relevant contexts with query vector of dimension: {}", queryVector.length);
+    public List<DocumentChunk> searchRelevantContexts(float[] queryVector, List<String> documentIds) {
+        log.debug("Searching for relevant contexts with query vector of dimension: {} and {} documents", 
+                queryVector.length, documentIds != null ? documentIds.size() : "all");
         
-        List<ScoredChunk> scoredChunks = searchWithScores(queryVector);
+        List<ScoredChunk> scoredChunks = searchWithScores(queryVector, documentIds);
         
         // Expand with neighbor chunks for context continuity (MVP Phase 2 feature)
         List<DocumentChunk> expandedChunks = expandWithNeighbors(scoredChunks);
@@ -45,11 +49,12 @@ public class VectorRepositoryService {
     }
     
     /**
-     * Search Chroma and return scored results.
+     * Search Chroma and return scored results, filtered by document IDs.
      * @param queryVector The embedding vector
+     * @param documentIds Optional list of document IDs to filter by
      * @return List of scored chunks
      */
-    public List<ScoredChunk> searchWithScores(float[] queryVector) {
+    public List<ScoredChunk> searchWithScores(float[] queryVector, List<String> documentIds) {
         try {
             // Query Chroma for top-k similar embeddings
             List<ChromaDbService.ChromaQueryResult> chromaResults = chromaDbService.query("documents", queryVector, topK);
@@ -63,11 +68,24 @@ public class VectorRepositoryService {
             for (ChromaDbService.ChromaQueryResult result : chromaResults) {
                 String chunkId = result.getId();
                 DocumentChunk chunk = documentChunkRepository.findById(chunkId).orElse(null);
-                if (chunk != null) {
-                    // Chroma returns distances; convert to similarity (1 - distance for normalized vectors)
-                    double similarity = 1.0 - (result.getDistance() != null ? result.getDistance() : 1.0);
-                    scoredChunks.add(new ScoredChunk(chunk, similarity));
+                
+                if (chunk == null) {
+                    log.debug("Chunk {} not found in database", chunkId);
+                    continue;
                 }
+                
+                // Filter by document IDs if specified
+                if (documentIds != null && !documentIds.isEmpty()) {
+                    String docId = chunk.getDocument().getId();
+                    if (!documentIds.contains(docId)) {
+                        log.debug("Skipping chunk {} - document {} not in selected list", chunkId, docId);
+                        continue;
+                    }
+                }
+                
+                // Chroma returns distances; convert to similarity (1 - distance for normalized vectors)
+                double similarity = 1.0 - (result.getDistance() != null ? result.getDistance() : 1.0);
+                scoredChunks.add(new ScoredChunk(chunk, similarity));
             }
             
             log.debug("Found {} relevant chunks via Chroma search", scoredChunks.size());

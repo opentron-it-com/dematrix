@@ -198,7 +198,7 @@ class AcceptanceTest {
 
         // Execute query
         String query = "What are the main sections?";
-        Flux<ChatStreamResponse> responseFlux = ragGenerationService.generateStreamingResponse(query, "conv-123");
+        Flux<ChatStreamResponse> responseFlux = ragGenerationService.generateStreamingResponse(query, "conv-123", null);
 
         AtomicInteger responseCount = new AtomicInteger(0);
         StepVerifier.create(responseFlux)
@@ -232,7 +232,7 @@ class AcceptanceTest {
         storeChunksInChroma(doc, chunks);
 
         // Execute query and collect final response
-        Flux<ChatStreamResponse> responseFlux = ragGenerationService.generateStreamingResponse("Test query", "conv-123");
+        Flux<ChatStreamResponse> responseFlux = ragGenerationService.generateStreamingResponse("Test query", "conv-123", null);
 
         StepVerifier.create(responseFlux)
                 .expectComplete()
@@ -283,7 +283,7 @@ class AcceptanceTest {
         storeChunksInChroma(doc, chunks);
 
         // Execute query - will fail if Ollama unavailable but error will be handled
-        Flux<ChatStreamResponse> responseFlux = ragGenerationService.generateStreamingResponse("Test", "conv-123");
+        Flux<ChatStreamResponse> responseFlux = ragGenerationService.generateStreamingResponse("Test", "conv-123", null);
 
         StepVerifier.create(responseFlux)
                 .expectNextMatches(response -> response.getStatus() != null)

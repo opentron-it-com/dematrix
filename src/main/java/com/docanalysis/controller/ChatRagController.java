@@ -28,7 +28,7 @@ public class ChatRagController {
     
     /**
      * Chat endpoint - SSE streaming response.
-     * @param request Chat query request with query and conversationId
+     * @param request Chat query request with query, conversationId, and optional documentIds filter
      * @return Flux of streaming chat events
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -51,9 +51,10 @@ public class ChatRagController {
         String conversationId = request.getConversationId() != null ? 
                 request.getConversationId() : generateConversationId();
         
-        log.debug("Starting RAG generation for conversation: {}", conversationId);
+        log.debug("Starting RAG generation for conversation: {} with {} documents", conversationId, 
+                request.getDocumentIds() != null ? request.getDocumentIds().size() : "all");
 
-        return ragGenerationService.generateStreamingResponse(request.getQuery(), conversationId)
+        return ragGenerationService.generateStreamingResponse(request.getQuery(), conversationId, request.getDocumentIds())
             .map(response -> ServerSentEvent.builder(response).build())
             .onErrorResume(e -> {
                 log.error("Error during chat: {}", e.getMessage(), e);

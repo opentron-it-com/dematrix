@@ -37,7 +37,7 @@ export const ChatConsole = ({ document, onClose }) => {
     <div className="chat-console">
       <div className="console-header">
         <div className="console-title">
-          <h2>🧬 DE MATRIX</h2>
+          <h2>🧬 adesso</h2>
           <h3>{document.fileName}</h3>
           <p className="document-desc">{document.chunkCount} chunks • {document.status}</p>
         </div>

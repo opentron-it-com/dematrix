@@ -21,7 +21,7 @@ import java.util.*;
 
 /**
  * Handles document processing: extraction, chunking, and embedding generation.
- * Process is synchronous for MVP simplicity.
+ * Uses word-based chunking for PDF reliability (not paragraph-based).
  */
 @Service
 @RequiredArgsConstructor
@@ -33,13 +33,13 @@ public class DocumentProcessingService {
     private final DocumentChunkRepository documentChunkRepository;
     private final VectorEmbeddingService vectorEmbeddingService;
     
-    @Value("${app.chunking.chunk-size:1000}")
+    @Value("${app.chunking.chunk-size:1024}")
     private int chunkSize;
     
     @Value("${app.chunking.chunk-overlap:100}")
     private int chunkOverlap;
     
-    @Value("${app.chunking.min-chunk-size:100}")
+    @Value("${app.chunking.min-chunk-size:200}")
     private int minChunkSize;
     
     /**
@@ -75,22 +75,28 @@ public class DocumentProcessingService {
                 throw new DocumentProcessingException("Unsupported file format");
             }
             
+            log.info("Extracted text length: {} chars", extractedText.length());
             document.setExtractedText(extractedText);
             
-            // Perform smart chunking
-            List<DocumentChunk> chunks = performSmartChunking(document, extractedText);
+            // Perform word-based chunking (more reliable than paragraph-based)
+            List<DocumentChunk> chunks = performWordBasedChunking(document, extractedText);
             log.info("Created {} chunks for document: {}", chunks.size(), document.getId());
             
             document.setChunkCount(chunks.size());
             document.setStatus("INDEXED");
             document = documentRepository.save(document);
             
-            // Generate embeddings for all chunks (synchronous for MVP)
+            // Generate embeddings for all chunks
             for (DocumentChunk chunk : chunks) {
-                vectorEmbeddingService.generateAndStoreEmbedding(chunk);
+                try {
+                    vectorEmbeddingService.generateAndStoreEmbedding(chunk);
+                } catch (Exception e) {
+                    log.error("Failed to embed chunk {}: {}", chunk.getId(), e.getMessage());
+                    throw e;
+                }
             }
             
-            log.info("Document processing completed: {}", document.getId());
+            log.info("Document processing completed: {} ({} chunks indexed)", document.getId(), chunks.size());
             return document;
         } catch (Exception e) {
             log.error("Error processing document: {}", fileName, e);
@@ -98,65 +104,79 @@ public class DocumentProcessingService {
         }
     }
     
-    private List<DocumentChunk> performSmartChunking(Document document, String text) {
+    /**
+     * Split text into chunks by word boundaries.
+     * More reliable than paragraph-splitting for PDFs.
+     */
+    private List<DocumentChunk> performWordBasedChunking(Document document, String text) {
         List<DocumentChunk> chunks = new ArrayList<>();
         
-        // Split by paragraphs first
-        String[] paragraphs = text.split("\n\n+");
+        // Split by whitespace to get words/tokens
+        String[] tokens = text.split("\\s+");
+        log.debug("Total tokens: {}", tokens.length);
+        
         StringBuilder currentChunk = new StringBuilder();
         int sequenceOrder = 0;
         int pageNumber = 1;
         int charOffset = 0;
         
-        for (String paragraph : paragraphs) {
-            String trimmedPara = paragraph.trim();
-            
-            if (trimmedPara.isEmpty()) {
+        for (String token : tokens) {
+            if (token.isEmpty()) {
                 continue;
             }
             
-            // Check if adding paragraph exceeds chunk size
-            if ((currentChunk.length() + trimmedPara.length()) > chunkSize && currentChunk.length() > minChunkSize) {
+            // Check if adding token exceeds chunk size
+            int potentialLength = currentChunk.length() + token.length() + 1;
+            
+            if (potentialLength > chunkSize && currentChunk.length() > minChunkSize) {
                 // Save current chunk
-                DocumentChunk chunk = DocumentChunk.builder()
-                        .document(document)
-                        .chunkText(currentChunk.toString())
-                        .sequenceOrder(sequenceOrder++)
-                        .pageNumber(pageNumber)
-                        .startOffset((long) charOffset)
-                        .endOffset((long) (charOffset + currentChunk.length()))
-                        .isTableData(detectTableData(currentChunk.toString()))
-                        .build();
+                String chunkText = currentChunk.toString().trim();
+                if (!chunkText.isEmpty()) {
+                    DocumentChunk chunk = DocumentChunk.builder()
+                            .document(document)
+                            .chunkText(chunkText)
+                            .sequenceOrder(sequenceOrder++)
+                            .pageNumber(pageNumber)
+                            .startOffset((long) charOffset)
+                            .endOffset((long) (charOffset + chunkText.length()))
+                            .isTableData(detectTableData(chunkText))
+                            .build();
+                    
+                    chunks.add(documentChunkRepository.save(chunk));
+                    log.debug("Saved chunk {}: {} chars", sequenceOrder - 1, chunkText.length());
+                    
+                    charOffset += chunkText.length();
+                }
                 
-                chunks.add(documentChunkRepository.save(chunk));
-                charOffset += currentChunk.length();
-                currentChunk = new StringBuilder(trimmedPara);
+                currentChunk = new StringBuilder(token);
                 
-                // Update page number (heuristic: ~3000 chars per page)
+                // Update page number
                 if (charOffset > 3000 * pageNumber) {
                     pageNumber++;
                 }
             } else {
                 if (currentChunk.length() > 0) {
-                    currentChunk.append("\n\n");
+                    currentChunk.append(" ");
                 }
-                currentChunk.append(trimmedPara);
+                currentChunk.append(token);
             }
         }
         
         // Save final chunk
-        if (currentChunk.length() > minChunkSize) {
+        String finalChunkText = currentChunk.toString().trim();
+        if (finalChunkText.length() > minChunkSize) {
             DocumentChunk chunk = DocumentChunk.builder()
                     .document(document)
-                    .chunkText(currentChunk.toString())
+                    .chunkText(finalChunkText)
                     .sequenceOrder(sequenceOrder)
                     .pageNumber(pageNumber)
                     .startOffset((long) charOffset)
-                    .endOffset((long) (charOffset + currentChunk.length()))
-                    .isTableData(detectTableData(currentChunk.toString()))
+                    .endOffset((long) (charOffset + finalChunkText.length()))
+                    .isTableData(detectTableData(finalChunkText))
                     .build();
             
             chunks.add(documentChunkRepository.save(chunk));
+            log.debug("Saved final chunk {}: {} chars", sequenceOrder, finalChunkText.length());
         }
         
         return chunks;

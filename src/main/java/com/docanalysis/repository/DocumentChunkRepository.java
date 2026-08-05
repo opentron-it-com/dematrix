@@ -33,4 +33,10 @@ public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, St
      * @return Optional containing the chunk if found
      */
     Optional<DocumentChunk> findByDocumentIdAndSequenceOrder(String documentId, Integer sequenceOrder);
+    
+    /**
+     * Delete all chunks associated with a document.
+     * @param documentId The document ID
+     */
+    void deleteByDocumentId(String documentId);
 }

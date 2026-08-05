@@ -15,8 +15,8 @@ import java.util.*;
 
 /**
  * Generates embeddings using local Ollama embeddings (free, no API calls).
- * Previously used Voyage AI API but switched to local for cost-efficiency.
- * Embeddings are stored ONLY in ChromaDB to avoid synchronization issues.
+ * Enforces max sequence length to prevent Ollama failures.
+ * mxbai-embed-large: 1024 dimensions, ~2000 char context window
  */
 @Service
 @RequiredArgsConstructor
@@ -29,19 +29,24 @@ public class VectorEmbeddingService {
     @Value("${app.ollama.base-url:http://ollama:11434}")
     private String ollamaBaseUrl;
 
-    @Value("${app.embedding.model:nomic-embed-text}")
+    @Value("${app.embedding.model:mxbai-embed-large}")
     private String embeddingModel;
+
+    // mxbai context limit: ~512 tokens ≈ 2000 chars. Use 2000 to match chunk size.
+    private static final int MAX_EMBEDDING_TEXT_LENGTH = 2000;
 
     /**
      * Generate embedding and store in ChromaDB only.
-     * Uses local Ollama embeddings for zero-cost inference.
+     * Truncates text to fit Ollama context window before embedding.
      * @param chunk The document chunk to embed
      */
     public void generateAndStoreEmbedding(DocumentChunk chunk) {
         try {
             log.debug("Generating embedding for chunk: {}", chunk.getId());
 
-            float[] vector = getEmbeddingVector(chunk.getChunkText());
+            // Truncate text to fit model context window
+            String textToEmbed = truncateText(chunk.getChunkText(), MAX_EMBEDDING_TEXT_LENGTH);
+            float[] vector = getEmbeddingVector(textToEmbed);
 
             // Store ONLY in ChromaDB (never in PostgreSQL)
             Map<String, Object> metadata = new HashMap<>();
@@ -68,24 +73,19 @@ public class VectorEmbeddingService {
 
     /**
      * Generate embedding vector for text using local Ollama.
-     * @param text The text to embed
-     * @return float array representing the embedding
+     * @param text The text to embed (should be pre-truncated)
+     * @return float array representing the embedding (1024 dims for mxbai)
      */
     public float[] getEmbeddingVector(String text) {
-        try {
-            if (text == null || text.isBlank()) {
-                return new float[0];
-            }
-            return callOllamaEmbedding(text);
-        } catch (Exception e) {
-            log.error("Error generating embedding with Ollama, using fallback", e);
-            return generateMockEmbedding(text);
+        if (text == null || text.isBlank()) {
+            return new float[0];
         }
+        return callOllamaEmbedding(text);
     }
 
     /**
      * Call local Ollama embeddings endpoint.
-     * Model: nomic-embed-text (384 dimensions, fast, free).
+     * Model: mxbai-embed-large (1024 dimensions).
      */
     private float[] callOllamaEmbedding(String text) {
         String ollamaUrl = ollamaBaseUrl.endsWith("/") ? ollamaBaseUrl : ollamaBaseUrl + "/";
@@ -107,59 +107,52 @@ public class VectorEmbeddingService {
             );
 
             if (response == null || response.getEmbedding() == null || response.getEmbedding().isEmpty()) {
-                log.warn("Ollama returned empty embedding, using fallback");
-                return generateMockEmbedding(text);
+                throw new DocumentProcessingException("Ollama returned empty embedding response");
             }
 
             List<Double> embeddingValues = response.getEmbedding();
+            
+            // Validate dimension matches expected (1024 for mxbai)
+            if (embeddingValues.size() != 1024) {
+                throw new DocumentProcessingException(
+                    String.format("Embedding dimension mismatch: expected 1024, got %d", embeddingValues.size())
+                );
+            }
+            
             float[] result = new float[embeddingValues.size()];
             for (int i = 0; i < embeddingValues.size(); i++) {
                 result[i] = embeddingValues.get(i).floatValue();
             }
             return result;
         } catch (Exception e) {
-            log.warn("Ollama embedding failed ({}), ensure model '{}' is pulled. Using fallback", 
-                    e.getMessage(), embeddingModel);
-            return generateMockEmbedding(text);
+            log.error("Ollama embedding failed for model '{}': {}", embeddingModel, e.getMessage(), e);
+            throw new DocumentProcessingException(
+                String.format("Embedding service error. Ensure Ollama is running with '%s' model.", embeddingModel), 
+                e
+            );
         }
-    }
-
-    /**
-     * Fallback: deterministic mock embedding (384 dims).
-     * Used when Ollama is unavailable. Quality is lower but allows graceful degradation.
-     */
-    private float[] generateMockEmbedding(String text) {
-        int dimension = 384;
-        float[] vector = new float[dimension];
-
-        long hashValue = text.hashCode();
-        for (int i = 0; i < dimension; i++) {
-            hashValue = (hashValue * 1103515245 + 12345) & 0x7fffffff;
-            vector[i] = (float) ((hashValue % 1000) / 1000.0 - 0.5);
-        }
-
-        float norm = 0f;
-        for (float v : vector) {
-            norm += v * v;
-        }
-        norm = (float) Math.sqrt(norm);
-
-        if (norm > 0) {
-            for (int i = 0; i < dimension; i++) {
-                vector[i] /= norm;
-            }
-        }
-
-        return vector;
     }
 
     /**
      * Embed a query for retrieval.
      * @param query The query text
-     * @return float array embedding
+     * @return float array embedding (1024 dims)
      */
     public float[] embedQuery(String query) {
-        return getEmbeddingVector(query);
+        String truncated = truncateText(query, MAX_EMBEDDING_TEXT_LENGTH);
+        return getEmbeddingVector(truncated);
+    }
+
+    /**
+     * Truncate text to fit model context window.
+     * Keeps first N characters to preserve semantic meaning from document start.
+     */
+    private String truncateText(String text, int maxLength) {
+        if (text == null || text.length() <= maxLength) {
+            return text;
+        }
+        log.warn("Truncating text from {} to {} chars for embedding", text.length(), maxLength);
+        return text.substring(0, maxLength);
     }
 
     static class OllamaEmbeddingResponse {

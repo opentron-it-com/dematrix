@@ -11,6 +11,9 @@ export const api = {
   documents: {
     list: `${API_BASE}/documents/list`,
     upload: `${API_BASE}/documents/upload`,
+    delete: (id) => `${API_BASE}/documents/${id}`,
+    deleteMultiple: `${API_BASE}/documents`,
+    match: `${API_BASE}/documents/match`,
   },
   chat: {
     stream: `${API_BASE}/chat/stream`,

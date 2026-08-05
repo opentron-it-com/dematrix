@@ -7,7 +7,7 @@ RUN mvn dependency:go-offline -q
 
 COPY src ./src
 ARG CACHE_BUST=1
-RUN mvn clean package -q -DskipTests
+RUN mvn clean package -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine
 
