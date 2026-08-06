@@ -1,0 +1,127 @@
+name: enterprise-doc-analyzer
+
+services:
+  backend:
+    image: enterprise-doc-analyzer-backend:latest
+    container_name: doc-analyzer-backend
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-test-key}
+      CHROMA_URL: http://chroma:8000
+      OLLAMA_BASE_URL: http://ollama:11434
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/docdb
+      SPRING_DATASOURCE_USERNAME: docuser
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-docpass123}
+      APP_EMBEDDING_MODEL: mxbai-embed-large
+      APP_CHUNKING_CHUNK_SIZE: 1024
+      APP_CHUNKING_OVERLAP: 100
+      APP_CHUNKING_MIN_CHUNK_SIZE: 256
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chroma:
+        condition: service_started
+      ollama:
+        condition: service_started
+      ollama-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    networks:
+      - docnet
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/api/chat/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: doc-analyzer-db
+    environment:
+      POSTGRES_DB: docdb
+      POSTGRES_USER: docuser
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-docpass123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - docnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docuser -d docdb"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  chroma:
+    image: ghcr.io/chroma-core/chroma:latest
+    container_name: doc-analyzer-vector-db
+    environment:
+      CHROMA_DB_IMPL: duckdb+parquet
+      PERSIST_DIRECTORY: /chroma/data
+    volumes:
+      - chroma_data:/chroma/data
+    networks:
+      - docnet
+    ports:
+      - "8002:8000"
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: doc-analyzer-ollama
+    ports:
+      - "11434:11434"
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - docnet
+
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: doc-analyzer-ollama-init
+    depends_on:
+      ollama:
+        condition: service_started
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    networks:
+      - docnet
+    entrypoint: /bin/sh
+    command: -c "ollama pull qwen2.5:0.5b && ollama pull mxbai-embed-large && echo 'Models loaded successfully'"
+    restart: "no"
+
+  frontend:
+    image: enterprise-doc-analyzer-frontend:latest
+    container_name: doc-analyzer-frontend
+    environment:
+      REACT_APP_API_URL: http://localhost:8080/api
+    networks:
+      - docnet
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:alpine
+    container_name: doc-analyzer-nginx
+    ports:
+      - "3000:80"
+      - "8080:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - docnet
+
+volumes:
+  postgres_data:
+  chroma_data:
+  ollama_data:
+
+networks:
+  docnet:
+    driver: bridge

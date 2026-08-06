@@ -33,4 +33,8 @@ uploads/
 backups/
 node_modules/
 build/
+docker-images/
+docker-images-archives/
+docker-engine/
+staging/
 

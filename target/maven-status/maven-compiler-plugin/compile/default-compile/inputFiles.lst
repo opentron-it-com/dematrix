@@ -8,6 +8,7 @@ C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\service\VectorEmbeddingService.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\domain\FloatArrayConverter.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\DocAnalyzerApplication.java
+C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\dto\CandidateMatchResponse.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\controller\SettingsController.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\domain\SystemSettings.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\service\FileStorageService.java
@@ -26,8 +27,10 @@ C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\controller\ChatRagController.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\service\ChromaDbService.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\repository\DocumentChunkRepository.java
+C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\service\DocumentDeletionService.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\repository\EmbeddingVectorRepository.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\dto\DocumentUploadResponse.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\dto\ChatQueryRequest.java
+C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\service\CandidateMatchingService.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\config\AppConfig.java
 C:\Users\ciorica\Documents\enterprise-doc-analyzer\src\main\java\com\docanalysis\repository\DocumentRepository.java

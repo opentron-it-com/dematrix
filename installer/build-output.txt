@@ -1,0 +1,4 @@
+Processing config: C:\Progra~2\NSIS\nsisconf.nsh
+Processing script file: "standalone-installer.nsi" (ACP)
+File: failed creating mmap of "docker-images-archives\part3\ollama-ollama-latest.tar"
+Error in script "standalone-installer.nsi" on line 62 -- aborting creation process

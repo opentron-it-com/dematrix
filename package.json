@@ -1,0 +1,95 @@
+{
+  "name": "adesso-document-analyzer",
+  "version": "1.0.0",
+  "description": "Adesso Enterprise Document Analyzer - Standalone Desktop Application",
+  "author": "Adesso",
+  "homepage": "./",
+  "private": true,
+  "main": "public/electron.js",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1"
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "latest",
+    "electron-is-dev": "latest",
+    "wait-on": "latest",
+    "concurrently": "latest"
+  },
+  "scripts": {
+    "react-start": "cd frontend && npm start",
+    "react-build": "cd frontend && npm run build",
+    "electron-start": "wait-on http://localhost:3000 && electron .",
+    "start": "concurrently \"npm run react-start\" \"wait-on http://localhost:3000 && npm run electron-start\"",
+    "build": "npm run react-build && electron-builder --dir",
+    "build-win": "npm run react-build && electron-builder --win --publish never",
+    "build-mac": "npm run react-build && electron-builder --mac --publish never",
+    "build-linux": "npm run react-build && electron-builder --linux --publish never"
+  },
+  "build": {
+    "appId": "com.adesso.documentanalyzer",
+    "productName": "Adesso Document Analyzer",
+    "files": [
+      "frontend/build/**/*",
+      "public/electron.js",
+      "public/preload.js",
+      "public/assets/**/*",
+      "resources/**/*"
+    ],
+    "directories": {
+      "buildResources": "public/assets",
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Adesso Document Analyzer",
+      "installerIcon": "public/assets/icon.ico",
+      "uninstallerIcon": "public/assets/icon.ico",
+      "installerHeaderIcon": "public/assets/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "public/assets/icon.icns"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "public/assets/icon.png"
+    }
+  },
+  "eslintConfig": {
+    "extends": "react-app"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}

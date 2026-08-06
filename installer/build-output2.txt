@@ -1,0 +1,19 @@
+Processing config: C:\Progra~2\NSIS\nsisconf.nsh
+Processing script file: "standalone-installer.nsi" (ACP)
+
+Processed 1 file, writing output (x86-unicode):
+
+Output: "c:\Users\ciorica\Documents\enterprise-doc-analyzer\installer\Adesso-Document-Analyzer-Standalone-Setup.exe"
+Install: 4 pages (256 bytes), 1 section (2072 bytes), 411 instructions (11508 bytes), 227 strings (8812 bytes), 1 language table (298 bytes).
+Uninstall: 1 page (128 bytes), 1 section (2072 bytes), 25 instructions (700 bytes), 73 strings (2470 bytes), 1 language table (194 bytes).
+Datablock optimizer saved 2381 bytes (~0.0%).
+
+Using zlib compression.
+
+EXE header size:               52736 / 39936 bytes
+Install code:                   4579 / 23410 bytes
+Install data:              637926520 / 767842884 bytes
+Uninstall code+data:           10843 / 15164 bytes
+CRC (0x1484200E):                  4 / 4 bytes
+
+Total size:                637994682 / 767921398 bytes (83.0%)
