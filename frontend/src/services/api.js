@@ -9,7 +9,7 @@ export const api = {
   },
   settings: `${API_BASE}/settings`,
   documents: {
-    list: `${API_BASE}/documents/list`,
+    list: `${API_BASE}/documents`,
     upload: `${API_BASE}/documents/upload`,
     delete: (id) => `${API_BASE}/documents/${id}`,
     deleteMultiple: `${API_BASE}/documents`,
@@ -17,6 +17,7 @@ export const api = {
   },
   chat: {
     stream: `${API_BASE}/chat/stream`,
+    analyze: `${API_BASE}/chat/analyze`,
     health: `${API_BASE}/chat/health`,
   },
 };

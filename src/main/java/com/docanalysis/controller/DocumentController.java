@@ -47,11 +47,32 @@ public class DocumentController {
     }
     
     @GetMapping
-    public ResponseEntity<?> listDocuments() {
-        log.info("GET /api/documents called");
+    public ResponseEntity<?> listDocuments(
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "pageSize", defaultValue = "50") int pageSize,
+            @RequestParam(value = "sortBy", defaultValue = "uploadedAt") String sortBy,
+            @RequestParam(value = "sortDir", defaultValue = "DESC") String sortDir) {
+        log.info("GET /api/documents called: page={}, pageSize={}, sortBy={}", page, pageSize, sortBy);
         try {
-            List<Document> docs = documentRepository.findAll();
-            List<Map<String, Object>> docsList = docs.stream().map(d -> {
+            List<Document> allDocs = documentRepository.findAll();
+            
+            // Sort by requested field
+            if ("title".equalsIgnoreCase(sortBy)) {
+                allDocs.sort((a, b) -> "DESC".equalsIgnoreCase(sortDir) ? b.getTitle().compareTo(a.getTitle()) : a.getTitle().compareTo(b.getTitle()));
+            } else if ("status".equalsIgnoreCase(sortBy)) {
+                allDocs.sort((a, b) -> "DESC".equalsIgnoreCase(sortDir) ? b.getStatus().compareTo(a.getStatus()) : a.getStatus().compareTo(b.getStatus()));
+            } else {
+                // Default: uploadedAt
+                allDocs.sort((a, b) -> "DESC".equalsIgnoreCase(sortDir) ? b.getUploadedAt().compareTo(a.getUploadedAt()) : a.getUploadedAt().compareTo(b.getUploadedAt()));
+            }
+            
+            int totalElements = allDocs.size();
+            int totalPages = (totalElements + pageSize - 1) / pageSize;
+            int start = page * pageSize;
+            int end = Math.min(start + pageSize, totalElements);
+            
+            List<Document> pagedDocs = start < totalElements ? allDocs.subList(start, end) : List.of();
+            List<Map<String, Object>> docsList = pagedDocs.stream().map(d -> {
                 Map<String, Object> doc = new HashMap<>();
                 doc.put("id", d.getId());
                 doc.put("documentId", d.getId());
@@ -66,11 +87,12 @@ public class DocumentController {
             
             Map<String, Object> response = new HashMap<>();
             response.put("documents", docsList);
-            response.put("totalElements", (long) docsList.size());
-            response.put("totalPages", 1);
-            response.put("currentPage", 0);
-            response.put("pageSize", 20);
-            response.put("hasMore", false);
+            response.put("totalElements", (long) totalElements);
+            response.put("totalPages", totalPages);
+            response.put("currentPage", page);
+            response.put("pageSize", pageSize);
+            response.put("hasMore", page < (totalPages - 1));
+            log.debug("Returning {} documents (page {}/{})", docsList.size(), page, totalPages);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Error listing documents", e);
@@ -79,9 +101,11 @@ public class DocumentController {
     }
     
     @GetMapping("/list")
-    public ResponseEntity<?> listDocumentsLegacy() {
+    public ResponseEntity<?> listDocumentsLegacy(
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "pageSize", defaultValue = "50") int pageSize) {
         log.info("GET /api/documents/list called");
-        return listDocuments();
+        return listDocuments(page, pageSize, "uploadedAt", "DESC");
     }
     
     @PostMapping("/upload")

@@ -1,6 +1,7 @@
 package com.docanalysis.service;
 
 import lombok.extern.slf4j.Slf4j;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
@@ -9,6 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.net.URI;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -33,6 +35,8 @@ public class ChromaDbService {
 
     @Value("${app.chroma.database:default_database}")
     private String chromaDatabase;
+
+    private String chromaBaseUrl;
 
     private final Map<String, String> collectionIdCache = new ConcurrentHashMap<>();
 
@@ -215,10 +219,7 @@ public class ChromaDbService {
      */
     public boolean isHealthy() {
         try {
-            String url = chromaUrl.endsWith("/")
-                    ? chromaUrl + "api/v2/heartbeat"
-                    : chromaUrl + "/api/v2/heartbeat";
-            
+            String url = chromaBaseUrl + "/api/v2/heartbeat";
             String response = restTemplate.getForObject(url, String.class);
             log.debug("Chroma heartbeat successful: {}", response);
             return true;
@@ -252,9 +253,31 @@ public class ChromaDbService {
         return response.getId();
     }
 
+    @PostConstruct
+    private void validateChromaConfiguration() {
+        if (chromaUrl == null || chromaUrl.isBlank()) {
+            throw new IllegalStateException("app.chroma.url is not configured or is blank");
+        }
+
+        String normalizedUrl = chromaUrl.trim();
+        if (normalizedUrl.endsWith("/")) {
+            normalizedUrl = normalizedUrl.substring(0, normalizedUrl.length() - 1);
+        }
+
+        URI uri = URI.create(normalizedUrl);
+        if (uri.getScheme() == null || uri.getScheme().isBlank()) {
+            throw new IllegalStateException("app.chroma.url must include a valid scheme, e.g. http:// or https://");
+        }
+        if (uri.getHost() == null || uri.getHost().isBlank()) {
+            throw new IllegalStateException("app.chroma.url must include a valid host: " + chromaUrl);
+        }
+
+        chromaBaseUrl = normalizedUrl;
+        log.info("Configured Chroma base URL: {}", chromaBaseUrl);
+    }
+
     private String buildV2CollectionsBaseUrl() {
-        String baseUrl = chromaUrl.endsWith("/") ? chromaUrl.substring(0, chromaUrl.length() - 1) : chromaUrl;
-        return baseUrl + "/api/v2/tenants/" + chromaTenant + "/databases/" + chromaDatabase + "/collections";
+        return chromaBaseUrl + "/api/v2/tenants/" + chromaTenant + "/databases/" + chromaDatabase + "/collections";
     }
 
     public static class ChromaCollectionResponse {

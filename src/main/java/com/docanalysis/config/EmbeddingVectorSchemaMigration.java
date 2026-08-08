@@ -4,8 +4,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+
+import java.sql.Connection;
 
 /**
  * Repairs legacy schema drift where vector_data was previously created as bytea.
@@ -21,6 +24,16 @@ public class EmbeddingVectorSchemaMigration implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         try {
+            String jdbcUrl = jdbcTemplate.execute((ConnectionCallback<String>) conn -> conn.getMetaData().getURL());
+            if (jdbcUrl != null && jdbcUrl.toLowerCase().contains("jdbc:h2:")) {
+                log.debug("Skipping PostgreSQL-specific embedding schema migration on H2 database (url={})", jdbcUrl);
+                return;
+            }
+            if (jdbcUrl == null || !jdbcUrl.toLowerCase().contains("jdbc:postgresql:")) {
+                log.debug("Skipping embedding schema migration for non-PostgreSQL database (url={})", jdbcUrl);
+                return;
+            }
+
             String udtName = jdbcTemplate.query(
                     """
                     SELECT udt_name

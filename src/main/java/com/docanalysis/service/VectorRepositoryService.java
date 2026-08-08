@@ -1,5 +1,6 @@
 package com.docanalysis.service;
 
+import com.docanalysis.domain.Document;
 import com.docanalysis.domain.DocumentChunk;
 import com.docanalysis.repository.DocumentChunkRepository;
 import lombok.RequiredArgsConstructor;
@@ -68,15 +69,21 @@ public class VectorRepositoryService {
             for (ChromaDbService.ChromaQueryResult result : chromaResults) {
                 String chunkId = result.getId();
                 DocumentChunk chunk = documentChunkRepository.findById(chunkId).orElse(null);
+                String documentIdFromMetadata = extractDocumentId(result);
                 
                 if (chunk == null) {
-                    log.debug("Chunk {} not found in database", chunkId);
-                    continue;
+                    if (documentIdFromMetadata == null || documentIdFromMetadata.isBlank()) {
+                        log.debug("Chunk {} not found in database and no document metadata available", chunkId);
+                        continue;
+                    }
+                    
+                    chunk = buildFallbackChunk(chunkId, documentIdFromMetadata, result);
+                    log.debug("Created fallback chunk {} for document {} from Chroma metadata", chunkId, documentIdFromMetadata);
                 }
                 
                 // Filter by document IDs if specified
                 if (documentIds != null && !documentIds.isEmpty()) {
-                    String docId = chunk.getDocument().getId();
+                    String docId = chunk.getDocument() != null ? chunk.getDocument().getId() : documentIdFromMetadata;
                     if (!documentIds.contains(docId)) {
                         log.debug("Skipping chunk {} - document {} not in selected list", chunkId, docId);
                         continue;
@@ -96,6 +103,48 @@ public class VectorRepositoryService {
         }
     }
     
+    private String extractDocumentId(ChromaDbService.ChromaQueryResult result) {
+        if (result == null || result.getMetadata() == null) {
+            return null;
+        }
+
+        Object documentId = result.getMetadata().get("document_id");
+        if (documentId instanceof String stringValue && !stringValue.isBlank()) {
+            return stringValue;
+        }
+
+        return null;
+    }
+
+    private DocumentChunk buildFallbackChunk(String chunkId, String documentId, ChromaDbService.ChromaQueryResult result) {
+        Document document = new Document();
+        document.setId(documentId);
+        document.setFileName(resolveDocumentName(result));
+        document.setTitle(resolveDocumentName(result));
+        document.setStatus("INDEXED");
+
+        return DocumentChunk.builder()
+                .id(chunkId)
+                .document(document)
+                .chunkText(result != null && result.getDocument() != null ? result.getDocument() : "")
+                .sequenceOrder(0)
+                .pageNumber(null)
+                .build();
+    }
+
+    private String resolveDocumentName(ChromaDbService.ChromaQueryResult result) {
+        if (result == null || result.getMetadata() == null) {
+            return "unknown-document";
+        }
+
+        Object documentName = result.getMetadata().get("document_name");
+        if (documentName instanceof String stringValue && !stringValue.isBlank()) {
+            return stringValue;
+        }
+
+        return "unknown-document";
+    }
+
     /**
      * Expand retrieved chunks with neighboring chunks for better context.
      * Example: if chunk 20 retrieved, also include chunks 19, 20, 21.

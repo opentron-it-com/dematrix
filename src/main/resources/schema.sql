@@ -24,13 +24,22 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     start_offset BIGINT,
     end_offset BIGINT,
     is_table_data BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    metadata VARCHAR(1000),
     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS chunk_references (
+    chunk_id VARCHAR(36) NOT NULL,
+    reference_type VARCHAR(100),
+    reference_value VARCHAR(500),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (chunk_id) REFERENCES document_chunks(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS embedding_vectors (
     id VARCHAR(36) PRIMARY KEY,
     document_chunk_id VARCHAR(36) NOT NULL,
-    vector_data double precision[] NOT NULL,
+    vector_data DOUBLE PRECISION ARRAY NOT NULL,
     embedding_model VARCHAR(255),
     dimension INT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -42,6 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_owner_id ON documents(owner_id);
 CREATE INDEX IF NOT EXISTS idx_status ON documents(status);
 CREATE INDEX IF NOT EXISTS idx_document_chunks_document ON document_chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_embedding_vectors_chunk ON embedding_vectors(document_chunk_id);
+CREATE INDEX IF NOT EXISTS idx_chunk_references_chunk ON chunk_references(chunk_id);
 
 CREATE TABLE IF NOT EXISTS system_settings (
     id VARCHAR(36) PRIMARY KEY,

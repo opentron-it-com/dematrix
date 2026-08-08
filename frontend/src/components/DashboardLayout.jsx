@@ -33,6 +33,28 @@ export const DashboardLayout = () => {
   const [savingSettings, setSavingSettings] = useState(false);
   const [documentsTags, setDocumentsTags] = useState({});
 
+  const DOCUMENT_TAGS_STORAGE_KEY = 'enterprise-doc-analyzer-document-tags';
+
+  const getPersistedDocumentTags = () => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const stored = localStorage.getItem(DOCUMENT_TAGS_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : {};
+    } catch (err) {
+      console.warn('Could not read persisted document tags:', err);
+      return {};
+    }
+  };
+
+  const persistDocumentTags = (tags) => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(DOCUMENT_TAGS_STORAGE_KEY, JSON.stringify(tags));
+    } catch (err) {
+      console.warn('Could not persist document tags:', err);
+    }
+  };
+
   const theme = settings?.darkTheme ? {
     bg: '#1a1a1a', bgSecondary: '#2d2d2d', bgTertiary: '#3a3a3a', text: '#e0e0e0',
     textSecondary: '#b0b0b0', border: '#404040', accent: '#1a9b71', accentLight: '#2ab886',
@@ -43,9 +65,9 @@ export const DashboardLayout = () => {
     error: '#c62828', success: '#1a9b71'
   };
 
-  const getDocumentType = (fileName) => {
-    if (!fileName) return null;
-    const lower = fileName.toLowerCase();
+  const getDocumentType = (value) => {
+    if (!value) return null;
+    const lower = value.toLowerCase();
     if (lower.includes('cv') || lower.includes('resume') || lower.includes('vita')) return 'candidates';
     if (lower.includes('job') || lower.includes('requirement') || lower.includes('spec')) return 'requirements';
     return null;
@@ -86,12 +108,16 @@ export const DashboardLayout = () => {
       if (!response.ok) { setLoadingDocs(false); return; }
       const data = await response.json();
       const docs = data.documents || [];
-      const newTags = {};
+      const persistedTags = getPersistedDocumentTags();
+      const newTags = { ...persistedTags };
       docs.forEach(doc => {
         const id = doc.documentId || doc.id;
-        const type = getDocumentType(doc.fileName);
-        if (type) newTags[id] = type;
+        const persistedType = persistedTags[id];
+        const inferredType = getDocumentType(doc.fileName) || getDocumentType(doc.title);
+        if (persistedType) newTags[id] = persistedType;
+        else if (inferredType) newTags[id] = inferredType;
       });
+      persistDocumentTags(newTags);
       if (reset || pageNum === 0) { setDocuments(docs); setDocumentsTags(newTags); }
       else { setDocuments(prev => [...prev, ...docs]); setDocumentsTags(prev => ({ ...prev, ...newTags })); }
       setCurrentPage(pageNum);
@@ -101,7 +127,24 @@ export const DashboardLayout = () => {
     finally { setLoadingDocs(false); setIsLoadingMore(false); }
   };
 
-  const handleDocumentProcessed = (doc, side) => { setDocuments(prev => [doc, ...prev]); setDocumentsTags(prev => ({ ...prev, [doc.documentId || doc.id]: side })); setShowUpload(false); setTotalDocs(prev => prev + 1); loadAnalytics(); };
+  const handleDocumentProcessed = (doc, side) => {
+    const normalizedDoc = {
+      ...doc,
+      id: doc?.id || doc?.documentId || `doc-${Date.now()}`,
+      documentId: doc?.documentId || doc?.id || `doc-${Date.now()}`,
+    };
+    const id = normalizedDoc.documentId || normalizedDoc.id;
+
+    setDocuments(prev => [normalizedDoc, ...prev]);
+    setDocumentsTags(prevTags => {
+      const nextTags = { ...prevTags, [id]: side };
+      persistDocumentTags(nextTags);
+      return nextTags;
+    });
+    setShowUpload(false);
+    setTotalDocs(prev => prev + 1);
+    loadAnalytics();
+  };
 
   const toggleDocumentSelectionReq = (docId) => { setSelectedDocIdsReq(prev => prev.includes(docId) ? prev.filter(id => id !== docId) : [...prev, docId]); };
   const toggleDeleteSelectionReq = (docId) => { setDeleteSelectedIdsReq(prev => prev.includes(docId) ? prev.filter(id => id !== docId) : [...prev, docId]); };
@@ -119,6 +162,7 @@ export const DashboardLayout = () => {
         const newTags = { ...documentsTags };
         deleteSelectedIdsReq.forEach(id => delete newTags[id]);
         setDocumentsTags(newTags);
+        persistDocumentTags(newTags);
         loadAnalytics();
       }
     } catch (err) { alert('Error deleting documents: ' + err.message); }
@@ -141,6 +185,7 @@ export const DashboardLayout = () => {
         const newTags = { ...documentsTags };
         deleteSelectedIdsCand.forEach(id => delete newTags[id]);
         setDocumentsTags(newTags);
+        persistDocumentTags(newTags);
         loadAnalytics();
       }
     } catch (err) { alert('Error deleting documents: ' + err.message); }

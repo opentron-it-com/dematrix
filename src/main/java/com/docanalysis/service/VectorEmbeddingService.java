@@ -26,7 +26,7 @@ public class VectorEmbeddingService {
     private final ChromaDbService chromaDbService;
     private final RestTemplate restTemplate;
 
-    @Value("${app.ollama.base-url:http://ollama:11434}")
+    @Value("${app.ollama.base-url:http://127.0.0.1:11434}")
     private String ollamaBaseUrl;
 
     @Value("${app.embedding.model:mxbai-embed-large}")
@@ -36,8 +36,9 @@ public class VectorEmbeddingService {
     private static final int MAX_EMBEDDING_TEXT_LENGTH = 2000;
 
     /**
-     * Generate embedding and store in ChromaDB only.
+     * Generate embedding and store in ChromaDB.
      * Truncates text to fit Ollama context window before embedding.
+     * ChromaDB upsert failures are logged but not fatal - documents can still be analyzed with full text.
      * @param chunk The document chunk to embed
      */
     public void generateAndStoreEmbedding(DocumentChunk chunk) {
@@ -48,7 +49,7 @@ public class VectorEmbeddingService {
             String textToEmbed = truncateText(chunk.getChunkText(), MAX_EMBEDDING_TEXT_LENGTH);
             float[] vector = getEmbeddingVector(textToEmbed);
 
-            // Store ONLY in ChromaDB (never in PostgreSQL)
+            // Store in ChromaDB (async, non-blocking)
             Map<String, Object> metadata = new HashMap<>();
             metadata.put("document_id", chunk.getDocument().getId());
             metadata.put("document_name", chunk.getDocument().getFileName());
@@ -56,15 +57,22 @@ public class VectorEmbeddingService {
             metadata.put("page_number", chunk.getPageNumber());
             metadata.put("is_table_data", chunk.getIsTableData());
             
-            chromaDbService.upsert(
-                    "documents",
-                    List.of(chunk.getId()),
-                    List.of(vector),
-                    List.of(chunk.getChunkText()),
-                    List.of(metadata)
-            );
-            
-            log.info("Embedding stored successfully for chunk: {} in ChromaDB", chunk.getId());
+            // Try to store in ChromaDB but don't fail if unavailable
+            try {
+                chromaDbService.upsert(
+                        "documents",
+                        List.of(chunk.getId()),
+                        List.of(vector),
+                        List.of(chunk.getChunkText()),
+                        List.of(metadata)
+                );
+                log.info("Embedding stored successfully for chunk: {} in ChromaDB", chunk.getId());
+            } catch (Exception chromaError) {
+                // ChromaDB upsert failed, but this is not fatal
+                // Documents are already stored in database and can be analyzed with full text
+                log.warn("ChromaDB upsert failed for chunk {} - falling back to full text analysis: {}", 
+                        chunk.getId(), chromaError.getMessage());
+            }
         } catch (Exception e) {
             log.error("Failed to generate embedding for chunk: {}", chunk.getId(), e);
             throw new DocumentProcessingException("Failed to generate embedding: " + e.getMessage(), e);
@@ -88,7 +96,7 @@ public class VectorEmbeddingService {
      * Model: mxbai-embed-large (1024 dimensions).
      */
     private float[] callOllamaEmbedding(String text) {
-        String ollamaUrl = ollamaBaseUrl.endsWith("/") ? ollamaBaseUrl : ollamaBaseUrl + "/";
+        String ollamaUrl = normalizeBaseUrl(ollamaBaseUrl);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -100,37 +108,68 @@ public class VectorEmbeddingService {
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
         
         try {
-            OllamaEmbeddingResponse response = restTemplate.postForObject(
-                    ollamaUrl + "api/embeddings",
-                    entity,
-                    OllamaEmbeddingResponse.class
-            );
-
-            if (response == null || response.getEmbedding() == null || response.getEmbedding().isEmpty()) {
-                throw new DocumentProcessingException("Ollama returned empty embedding response");
-            }
-
-            List<Double> embeddingValues = response.getEmbedding();
-            
-            // Validate dimension matches expected (1024 for mxbai)
-            if (embeddingValues.size() != 1024) {
-                throw new DocumentProcessingException(
-                    String.format("Embedding dimension mismatch: expected 1024, got %d", embeddingValues.size())
-                );
-            }
-            
-            float[] result = new float[embeddingValues.size()];
-            for (int i = 0; i < embeddingValues.size(); i++) {
-                result[i] = embeddingValues.get(i).floatValue();
-            }
-            return result;
+            return executeOllamaEmbeddingRequest(ollamaUrl, entity);
         } catch (Exception e) {
+            if (shouldRetryOnUnknownHost(e) && ollamaBaseUrl.contains("ollama")) {
+                String fallbackUrl = normalizeBaseUrl(ollamaBaseUrl.replace("ollama", "127.0.0.1"));
+                log.warn("Ollama host resolution failed for '{}', retrying with {}", ollamaBaseUrl, fallbackUrl);
+                try {
+                    return executeOllamaEmbeddingRequest(fallbackUrl, entity);
+                } catch (Exception fallbackEx) {
+                    log.error("Ollama fallback embedding request also failed: {}", fallbackEx.getMessage(), fallbackEx);
+                    throw new DocumentProcessingException(
+                        String.format("Embedding service error. Ensure Ollama is running and accessible at '%s'.", fallbackUrl),
+                        fallbackEx
+                    );
+                }
+            }
+
             log.error("Ollama embedding failed for model '{}': {}", embeddingModel, e.getMessage(), e);
             throw new DocumentProcessingException(
                 String.format("Embedding service error. Ensure Ollama is running with '%s' model.", embeddingModel), 
                 e
             );
         }
+    }
+
+    private String normalizeBaseUrl(String url) {
+        return url.endsWith("/") ? url : url + "/";
+    }
+
+    private boolean shouldRetryOnUnknownHost(Throwable e) {
+        while (e != null) {
+            if (e instanceof java.net.UnknownHostException) {
+                return true;
+            }
+            e = e.getCause();
+        }
+        return false;
+    }
+
+    private float[] executeOllamaEmbeddingRequest(String requestUrl, HttpEntity<Map<String, Object>> entity) {
+        OllamaEmbeddingResponse response = restTemplate.postForObject(
+                requestUrl + "api/embeddings",
+                entity,
+                OllamaEmbeddingResponse.class
+        );
+
+        if (response == null || response.getEmbedding() == null || response.getEmbedding().isEmpty()) {
+            throw new DocumentProcessingException("Ollama returned empty embedding response");
+        }
+
+        List<Double> embeddingValues = response.getEmbedding();
+
+        if (embeddingValues.size() != 1024) {
+            throw new DocumentProcessingException(
+                String.format("Embedding dimension mismatch: expected 1024, got %d", embeddingValues.size())
+            );
+        }
+
+        float[] result = new float[embeddingValues.size()];
+        for (int i = 0; i < embeddingValues.size(); i++) {
+            result[i] = embeddingValues.get(i).floatValue();
+        }
+        return result;
     }
 
     /**

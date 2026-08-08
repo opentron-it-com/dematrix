@@ -32,5 +32,6 @@ build/
 docker-images/
 docker-images-archives/
 docker-engine/
+dist/
 staging/
 

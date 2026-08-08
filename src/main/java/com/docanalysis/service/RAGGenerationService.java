@@ -71,6 +71,14 @@ public class RAGGenerationService {
                 contextChunks = vectorRepositoryService.searchRelevantContexts(queryVector, documentIds);
                 log.debug("Retrieved {} context chunks via vector search", contextChunks.size());
             }
+
+            if (contextChunks.isEmpty() && documentIds != null && !documentIds.isEmpty()) {
+                log.info("Vector search returned no usable chunks; falling back to repository chunks for {} documents", documentIds.size());
+                contextChunks = documentIds.stream()
+                        .flatMap(docId -> documentChunkRepository.findByDocumentId(docId).stream())
+                        .collect(Collectors.toList());
+                log.info("Repository fallback retrieved {} chunks", contextChunks.size());
+            }
             
             if (contextChunks.isEmpty()) {
                 log.warn("No relevant chunks found for query - proceeding with generic response");
@@ -83,15 +91,17 @@ public class RAGGenerationService {
                         .build());
             }
             
+            final List<DocumentChunk> selectedContextChunks = contextChunks;
+
             // Build augmented prompt for fast inference
-            String augmentedPrompt = buildAugmentedPrompt(userQuery, contextChunks);
+            String augmentedPrompt = buildAugmentedPrompt(userQuery, selectedContextChunks);
             log.debug("Augmented prompt length: {} characters", augmentedPrompt.length());
             
             // Stream response from LLM
             return llmService.streamCompletion(augmentedPrompt)
-                    .map(chunk -> buildStreamingResponse(chunk, contextChunks, conversationId, false))
+                    .map(chunk -> buildStreamingResponse(chunk, selectedContextChunks, conversationId, false))
                     .concatWith(Mono.fromCallable(() -> 
-                            buildStreamingResponse("", contextChunks, conversationId, true)
+                            buildStreamingResponse("", selectedContextChunks, conversationId, true)
                     ))
                     .doOnError(e -> log.error("Error during RAG generation", e));
         } catch (Exception e) {
@@ -132,12 +142,13 @@ public class RAGGenerationService {
                                  userQuery.length() > 100;
         
         if (isAnalysisQuery) {
-            promptBuilder.append("You are a job requirements analyzer. Extract and summarize ALL information from the documents.\n");
-            promptBuilder.append("Include: job title, technologies, skills, experience level, responsibilities, salary/compensation, location, benefits, qualifications, and any other requirements.\n");
+            promptBuilder.append("You are a job requirements analyzer. Extract and summarize information from the provided documents.\n");
+            promptBuilder.append("Use only the document content below. Do not invent facts.\n");
+            promptBuilder.append("If a detail is not present in the documents, say 'Not explicitly stated in the provided documents.'\n");
             promptBuilder.append("Format clearly with headers for each section.\n\n");
         } else {
-            promptBuilder.append("Answer from the context only.\n");
-            promptBuilder.append("If not found, say: \"Not available in the documents.\"\n\n");
+            promptBuilder.append("You are answering from the provided documents only.\n");
+            promptBuilder.append("Use the document content below. If the answer is missing, say: 'Not explicitly stated in the provided documents.'\n\n");
         }
         
         // Add ALL context sections

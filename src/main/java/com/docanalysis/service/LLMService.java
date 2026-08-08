@@ -74,7 +74,7 @@ public class LLMService {
     }
 
     private Flux<OllamaStreamResponse> callOllamaGenerateStream(String prompt, String model) {
-        String ollamaUrl = ollamaBaseUrl.endsWith("/") ? ollamaBaseUrl : ollamaBaseUrl + "/";
+        String ollamaUrl = normalizeBaseUrl(ollamaBaseUrl);
 
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("model", model);
@@ -89,7 +89,35 @@ public class LLMService {
                 .accept(MediaType.APPLICATION_NDJSON, MediaType.APPLICATION_JSON)
                 .bodyValue(request)
                 .retrieve()
-                .bodyToFlux(OllamaStreamResponse.class);
+                .bodyToFlux(OllamaStreamResponse.class)
+                .onErrorResume(e -> {
+                    if (shouldRetryOnUnknownHost(e) && ollamaBaseUrl.contains("ollama")) {
+                        String fallbackUrl = normalizeBaseUrl(ollamaBaseUrl.replace("ollama", "127.0.0.1"));
+                        log.warn("Ollama host resolution failed for '{}', retrying with {}", ollamaBaseUrl, fallbackUrl);
+                        return webClient.post()
+                                .uri(fallbackUrl + "api/generate")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .accept(MediaType.APPLICATION_NDJSON, MediaType.APPLICATION_JSON)
+                                .bodyValue(request)
+                                .retrieve()
+                                .bodyToFlux(OllamaStreamResponse.class);
+                    }
+                    return Flux.error(e);
+                });
+    }
+
+    private String normalizeBaseUrl(String url) {
+        return url.endsWith("/") ? url : url + "/";
+    }
+
+    private boolean shouldRetryOnUnknownHost(Throwable e) {
+        while (e != null) {
+            if (e instanceof java.net.UnknownHostException) {
+                return true;
+            }
+            e = e.getCause();
+        }
+        return false;
     }
 
     static class OllamaResponse {

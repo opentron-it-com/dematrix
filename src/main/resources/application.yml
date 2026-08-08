@@ -9,13 +9,18 @@ spring:
     show-sql: false
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+        dialect: org.hibernate.dialect.H2Dialect
         format_sql: true
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/docdb}
-    driverClassName: org.postgresql.Driver
-    username: ${SPRING_DATASOURCE_USERNAME:docuser}
-    password: ${SPRING_DATASOURCE_PASSWORD:docpass123}
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:file:./staging/data/h2/docdb;DB_CLOSE_DELAY=-1}
+    driverClassName: org.h2.Driver
+    username: ${SPRING_DATASOURCE_USERNAME:sa}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+      continue-on-error: false
   servlet:
     multipart:
       max-file-size: 100MB
@@ -36,7 +41,7 @@ app:
     max-tokens: 2000
 
   ollama:
-    base-url: ${OLLAMA_BASE_URL:http://ollama:11434}
+    base-url: ${OLLAMA_BASE_URL:http://127.0.0.1:11434}
     model: ${OLLAMA_MODEL:mistral}
 
   voyage:
@@ -46,7 +51,6 @@ app:
 
   chroma:
     url: ${CHROMA_URL:http://localhost:8000}
-    embedding-model: all-MiniLM-L6-v2
 
   storage:
     upload-dir: ./uploads
